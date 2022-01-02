@@ -1,153 +1,138 @@
-from re import S
-from collections import deque, Counter, defaultdict
-from functools import reduce
-from operator import mul
-from itertools import permutations, takewhile, accumulate, count, islice
 import heapq as hq
 
-NEIGHBOUR4 = (-1, -1j, 1, +1j)
-NEIGHBOUR5 = (-1, -1j, 1, +1j, 0)
-NEIGHBOUR8 = (-1-1j, -1j, 1-1j, -1, 1, -1+1j, 1j, 1+1j)
-NEIGHBOUR9 = (-1-1j, -1j, 1-1j, -1, 0, 1, -1+1j, 1j, 1+1j)
 
-
-rawInput = """#############
+startInput = """#############
 #...........#
-###B#C#B#D###
-  #A#D#C#A#  
-  #########  """
-testRaw = """#############
-#.....D.....#
-###.#B#C#D###
-  #A#B#C#A#
+###D#B#D#A###
+  #C#C#A#B#
   #########"""
 
-def parseInput(inp):
-    d = dict()
-    for ri, r in enumerate(inp.splitlines()):
-        for ci, c in enumerate(r):
-            d[(ri, ci)] = c
-    return d
+extraStartLines = """  #D#C#B#A#
+  #D#B#A#C#
+"""
 
-def calcMoves():
-    moves = dict()
-    for srow in (2, 3):
-        for scol in (3, 5, 7, 9):
-            moves[(srow, scol)] = list()
-            drow = 1
-            for dcol in (1, 2, 4, 6, 8, 10, 11):
-                forbid = list()
-                if srow == 3:
-                    forbid.append((2, scol))
-                col = scol
-                while col != dcol:
-                    forbid.append((1, col))
-                    if col > dcol:
-                        col -= 1
-                    else:
-                        col += 1
-                forbid.append((drow, dcol))
-                moves[(srow, scol)].append(((drow, dcol), forbid))
-    moves2 = dict()
-    for src, dstl in moves.items():
-        for dst, forb in dstl:
-            if dst not in moves2:
-                moves2[dst] = list()
-            forb2 = list(reversed(forb[:-1]))
-            forb2.append(src)
-            moves2[dst].append((src, forb2))
-    moves.update(moves2)
-    return moves
+goalInput = """#############
+#...........#
+###A#B#C#D###
+  #A#B#C#D#
+  #########"""
 
-allMoves = calcMoves()
-for k, v in allMoves.items():
-    print(k)
-    for dst, forbid in v:
-        print(" ",dst, forbid)
+extraGoalLines = """  #A#B#C#D#
+  #A#B#C#D#
+"""
+
+
+def parseInput(inp, extraLines=""):
+    inpLines = list(inp.splitlines())
+    inpLines[-2:-2] = list(extraLines.splitlines())
+    inp = "\n".join(inpLines)
+    return {(ri, ci):c
+            for ri, r in enumerate(inp.splitlines())
+            for ci, c in enumerate(r)}
+
 
 def calcState(mp):
-    state = list()
-    for k, v in mp.items():
+    firstRow = [" ", " ", "|", " ", "|", " ", "|", " ", "|", " ", " "]
+    startColumns = [["", "", "", ""] for i in range(4)]
+    endColumns = ["" for i in range(4)]
+    maxDepth = 3
+    for (r, c), v in mp.items():
         if v in 'ABCD':
-            state.append((v, k, 0))
-    return tuple(sorted(state))
+            if r == 1:
+                firstRow[c-1] = v
+            if r > 1:
+                startColumns[c//2-1][r-2] = v
+                maxDepth = max(maxDepth, r)
+    firstRow = ''.join(firstRow)
+    startColumns = list((''.join(x) for x in startColumns))
+    for ci in range(4):
+        while len(startColumns[ci])>0 and startColumns[ci][-1] == "ABCD"[ci]:
+            l = startColumns[ci][-1]
+            endColumns[ci] = endColumns[ci] + l
+            startColumns[ci] = startColumns[ci][:-1]
+    return (firstRow, tuple(startColumns), tuple(endColumns), maxDepth-1)
 
-def endState(state):
-    for si, s in enumerate(state):
-        if s[1] != (2+si%2, 3+(si//2)*2):
-            return False
-    return True
 
-def deadState(state):
-    for si, s in enumerate(state):
-        if s[2] > 0 and s[1][0] in (2,3) and s[1][1] != 3+(si//2)*2:
-            return True
-    return False
-
-def findMoves(start, state, allMoves):
-    for dest, forbid in allMoves[start]:
-        allowed = True
-        for _, pos, _ in state:
-            if pos in forbid:
-                allowed = False
-                break
-        if allowed:
-            yield dest, len(forbid)
 
 costFactor = {"A":1, "B":10, "C":100, "D":1000}
 
-def findAllMoves(state, allMoves):
-    for letter, startPosition, noMoves in state:
-        if noMoves > 1:
+MovementBlock = {('A', 0):((1,), 2), ('B', 0):((3, 1), 4), ('C', 0):((5, 3, 1), 6), ('D', 0):((7, 5, 3, 1), 8),
+                 ('A', 1):((), 1), ('B', 1):((3,), 3), ('C', 1):((5, 3), 5), ('D', 1):((7, 5, 3), 7),
+                 ('A', 3):((), 1), ('B', 3):((), 1), ('C', 3):((5,), 3), ('D', 3):((7, 5), 5),
+                 ('A', 5):((3,), 3), ('B', 5):((), 1), ('C', 5):((), 1), ('D', 5):((7,), 3),
+                 ('A', 7):((3, 5,), 5), ('B', 7):((5,), 3), ('C', 7):((), 1), ('D', 7):((), 1),
+                 ('A', 9):((3, 5, 7,), 7), ('B', 9):((5, 7), 5), ('C', 9):((7,), 3), ('D', 9):((), 1),
+                 ('A', 10):((3, 5, 7, 9), 8), ('B', 10):((5, 7, 9), 6), ('C', 10):((7, 9), 4), ('D', 10):((9,), 2),}
+
+def findMoveDown(state):
+    firstRow = state[0]
+    for srcIdx, ch in enumerate(firstRow):
+        if ch in "ABCD":
+            destIdx = ord(ch) - ord('A')
+            destinationBlock = state[1][destIdx]
+            if len(destinationBlock) > 0:
+                continue
+            blocked, firstRowLength = MovementBlock[(ch, srcIdx)]
+            if any((firstRow[idx] in "ABCD" for idx in blocked)):
+                continue
+            newFirstRow = firstRow[:srcIdx] + " " + firstRow[srcIdx+1:]
+            endContainers = state[2]
+            newEndContainers =  endContainers[:destIdx] + (endContainers[destIdx]+ch,) + endContainers[destIdx+1:]
+            depth = state[3]
+            totLength = firstRowLength + depth - len(endContainers[destIdx])
+            return (newFirstRow, state[1], newEndContainers, depth), totLength * costFactor[ch]
+    return None, 0
+
+def findMovesUp(state):
+    firstRow = state[0]
+    containerRow = state[1]
+    destCont = state[2]
+    depth = state[3]
+    for containerIdx, container in enumerate(containerRow):
+        if len(container) == 0:
             continue
-        for endPosition, steps in findMoves(startPosition,
-                                            state,
-                                            allMoves):
-            yield (startPosition, 
-                   endPosition,
-                   costFactor[letter] * steps)
+        for destIdx, ch in enumerate(firstRow):
+            if ch in 'ABCD|':
+                continue
+            blocked, firstRowLength = MovementBlock[("ABCD"[containerIdx], destIdx)]
+            if any((firstRow[idx] in "ABCD" for idx in blocked)):
+                continue
+            firstRowLength = abs(destIdx - containerIdx*2 - 2)
+            newFirstRow = firstRow[:destIdx] + container[0] + firstRow[destIdx+1:]
+            newContRow = containerRow[:containerIdx] + (container[1:],) + containerRow[containerIdx+1:]
+            totLength = firstRowLength + depth - len(container) - len(destCont[containerIdx]) + 1
+            yield (newFirstRow, newContRow, state[2], depth), totLength * costFactor[container[0]]
+
+
+def findAllMoves(state):
+    newState, cost = findMoveDown(state)
+    if newState != None:
+        yield newState, cost
+        return
+    for state, cost in findMovesUp(state):
+        yield state, cost 
 
 def compareStates(st1, st2):
-    for s1, s2 in zip(st1, st2):
-        if s1[0] != s2[0] or s1[1] != s2[1]:
-            return False
-    return True
+    return st1 == st2
 
-inp = parseInput(rawInput)
-testInp = parseInput(testRaw)
-testState = calcState(testInp)
-state = calcState(inp)
-print(rawInput)
-d = []
-hq.heappush(d, (0, state))
-found = set()
-while len(d)>0:
-    cost, st = hq.heappop(d)
-    if endState(st):
-        print(cost, state)
-        break
-    if deadState(st):
-        continue
-    if compareStates(st, testState):
-        print(cost, st)
-        break
-    for start, end, addCost in findAllMoves(st, allMoves):
-        # print(start, end, addCost)
-        newState = list()
-        for letter, pos, moves in st:
-            if pos == start:
-                newState.append((letter, end, moves+1))
-            else:
-                newState.append((letter, pos, moves))
-        newState = tuple(sorted(newState))
-        newCost = cost + addCost
-        if newState in found:
+def calcMoveCost(startState, endState):
+    d = []
+    hq.heappush(d, (0, startState))
+    found = set()
+    while len(d)>0:
+        cost, st = hq.heappop(d)
+        if st in found:
             continue
-        found.add(newState)
-        hq.heappush(d, (newCost, newState))
-    print(cost, len(found), len(d))
-    # input()
-# print(findAllMoves(inp, state, forbidden))
-# submitSecure(puzzle, "a", "answer a")
+        found.add(st)
+        if compareStates(st, endState):
+            return cost
+        for newState, addCost in findAllMoves(st):
+            newCost = cost + addCost
+            hq.heappush(d, (newCost, newState))
 
-# submitSecure(puzzle, "b", "answer b")
+startState = calcState(parseInput(startInput))
+endState = calcState(parseInput(goalInput))
+print(calcMoveCost(startState, endState))
+startState = calcState(parseInput(startInput, extraStartLines))
+endState = calcState(parseInput(goalInput, extraGoalLines))
+print(calcMoveCost(startState, endState))
